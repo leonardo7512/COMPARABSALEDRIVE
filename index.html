@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector Faltantes Aromaker - V6 Final</title>
+    <style>
+        :root { --wsp: #25D366; --primary: #2c3e50; --bg: #f4f6f8; --alerta: #e74c3c; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); padding: 20px; color: #333; margin: 0; }
+        
+        .container { 
+            max-width: 850px; margin: 0 auto; background: white; 
+            border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.08); overflow: hidden; 
+        }
+        
+        .header { background: var(--primary); color: white; padding: 20px; text-align: center; }
+        .header h2 { margin: 0; }
+        
+        .main { padding: 25px; }
+        
+        label { font-weight: 700; display: block; margin-bottom: 8px; color: #2c3e50; }
+        .input-group { margin-bottom: 20px; background: #fff; }
+        
+        input, textarea { 
+            width: 100%; padding: 12px; border: 2px solid #dfe6e9; border-radius: 8px; 
+            font-size: 14px; box-sizing: border-box; font-family: monospace;
+        }
+        textarea { height: 120px; }
+        
+        .btn { 
+            background: #2980b9; color: white; border: none; padding: 15px; 
+            font-size: 16px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; 
+        }
+        .btn:hover { background: #3498db; }
+        
+        /* WhatsApp Box */
+        .wsp-box {
+            display: none; margin-top: 30px; background: #e6fffa; 
+            border: 2px solid var(--wsp); border-radius: 10px; padding: 20px;
+        }
+        .wsp-msg {
+            background: white; padding: 15px; border-radius: 8px; 
+            white-space: pre-wrap; border-left: 5px solid var(--wsp);
+            font-size: 13px; line-height: 1.5;
+        }
+        .btn-copy { background: var(--wsp); margin-top: 15px; }
+        .btn-copy:hover { background: #128c7e; }
+
+        /* Status file */
+        #fileStatus { font-weight: bold; font-size: 13px; margin-top: 5px; }
+        .ok { color: #27ae60; } .err { color: #c0392b; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h2>📊 Detector de Faltantes (Corregido)</h2>
+    </div>
+
+    <div class="main">
+        
+        <div class="input-group">
+            <label>1. Nombre Vendedor:</label>
+            <input type="text" id="vendorName" placeholder="Ej: Leonardo">
+        </div>
+
+        <div class="input-group">
+            <label>2. Cargar CSV de BSale:</label>
+            <input type="file" id="fileInput" accept=".csv,.txt">
+            <div id="fileStatus">Esperando archivo...</div>
+        </div>
+
+        <div class="input-group">
+            <label>3. Pegar Reporte (Texto sucio):</label>
+            <textarea id="compareInput" placeholder="Pega aquí el texto (10-11-25LUZ PALMA...)"></textarea>
+        </div>
+
+        <button class="btn" onclick="generarReporte()">⚡ Analizar</button>
+
+        <div id="wspContainer" class="wsp-box">
+            <h3 style="margin-top:0; color:#075e54;">✅ Mensaje Generado:</h3>
+            <div class="wsp-msg" id="wspMessage"></div>
+            <button class="btn btn-copy" onclick="copiarTexto()">📋 Copiar Mensaje</button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    let bsaleData = new Map(); 
+
+    // 1. LECTURA CSV
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) { parseCSV(e.target.result); };
+        reader.readAsText(file, 'ISO-8859-1'); 
+    });
+
+    function parseCSV(text) {
+        bsaleData.clear();
+        const lines = text.split(/\r\n|\n/);
+        let count = 0;
+
+        lines.forEach(line => {
+            const sep = line.includes(';') ? ';' : ',';
+            const parts = line.split(sep);
+
+            // Indices: B=1 (Nota), D=3 (Cliente), G=6 (Fecha)
+            if (parts.length > 6) {
+                let nota = parts[1].replace(/["']/g, '').trim(); 
+                let cliente = parts[3].replace(/["']/g, '').trim();
+                let fecha = parts[6].replace(/["']/g, '').trim(); 
+
+                // Regex: Capturar notas de 5 dígitos (ej: 26999, 27335)
+                if (nota.match(/^\d{5}$/)) {
+                    if (!cliente || cliente.length < 2) cliente = "Sin Nombre";
+                    bsaleData.set(nota, { cliente: cliente, fecha: fecha });
+                    count++;
+                }
+            }
+        });
+
+        const status = document.getElementById('fileStatus');
+        if (count > 0) {
+            status.innerHTML = `✅ ${count} notas cargadas OK.`;
+            status.className = 'ok';
+        } else {
+            status.innerHTML = `❌ No encontré notas. Revisa el archivo.`;
+            status.className = 'err';
+        }
+    }
+
+    // 2. CALCULAR DÍAS (Arreglado para Chile DD-MM-YY)
+    function calcularDias(fechaStr) {
+        if (!fechaStr) return 0;
+        
+        // Convertir "18-11-25" o "18-11-2025" a objeto Fecha
+        // Separar por guión o slash
+        const partes = fechaStr.split(/[-/]/);
+        if (partes.length !== 3) return 0;
+
+        let dia = parseInt(partes[0]);
+        let mes = parseInt(partes[1]) - 1; // Meses en JS van de 0 a 11
+        let anio = parseInt(partes[2]);
+
+        // Si el año es "25", convertir a "2025"
+        if (anio < 100) anio += 2000;
+
+        const fechaNota = new Date(anio, mes, dia);
+        const hoy = new Date();
+        
+        // Resetear horas para comparar solo fechas
+        hoy.setHours(0,0,0,0);
+        fechaNota.setHours(0,0,0,0);
+
+        // Diferencia en milisegundos -> días
+        const diffTime = hoy - fechaNota;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+        
+        return diffDays;
+    }
+
+    // 3. GENERAR REPORTE
+    function generarReporte() {
+        const vendedor = document.getElementById('vendorName').value.trim();
+        const texto = document.getElementById('compareInput').value;
+        
+        if (bsaleData.size === 0) { alert("Carga el archivo primero."); return; }
+        
+        // REGEX CORREGIDO: Ahora busca CUALQUIER número de 5 dígitos
+        const notasEnTexto = new Set();
+        const matches = texto.match(/\d{5}/g);
+        if (matches) matches.forEach(n => notasEnTexto.add(n));
+
+        let faltantes = [];
+        bsaleData.forEach((info, nota) => {
+            if (!notasEnTexto.has(nota)) {
+                const dias = calcularDias(info.fecha);
+                faltantes.push({ nota, ...info, dias });
+            }
+        });
+
+        const container = document.getElementById('wspContainer');
+        
+        if (faltantes.length > 0) {
+            container.style.display = 'block';
+            
+            // Fecha Actual
+            const now = new Date();
+            const fechaHoy = now.toLocaleDateString('es-CL');
+            const horaHoy = now.toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'});
+
+            let msj = `Hola *${vendedor}* 👋,\n\n`;
+            msj += `⚠️ *REPORTE DE FALTANTES*\n`;
+            msj += `🕒 Generado: ${fechaHoy} a las ${horaHoy}\n\n`;
+            msj += `Detectamos notas en BSale que *NO* están en el reporte:\n\n`;
+
+            faltantes.forEach(item => {
+                let icono = "⏳";
+                // Lógica de iconos según antigüedad
+                if (item.dias > 4) icono = "🚨"; 
+                if (item.dias > 10) icono = "💀"; 
+                
+                // Caso especial: Si dice que pasaron 200 días, probablemente la fecha en BSale esté rara, pero lo mostramos igual.
+                // Si son días negativos (futuro), ponemos 0.
+                let diasShow = item.dias < 0 ? 0 : item.dias;
+
+                msj += `❌ *NV ${item.nota}* - ${item.cliente}\n`;
+                msj += `   📅 Fecha: ${item.fecha} (${icono} ${diasShow} días)\n\n`;
+            });
+
+            msj += `----------------------------------\n`;
+            msj += `📢 *INSTRUCCIONES:*\n`;
+            msj += `1️⃣ Revisa estado en BSale.\n`;
+            msj += `2️⃣ Si sale eliminada, ignora este aviso.\n`;
+            msj += `3️⃣ Si tiene días (🚨/💀) y sin pago, *ELIMINAR* para liberar stock.`;
+
+            document.getElementById('wspMessage').textContent = msj;
+        } else {
+            alert("✅ ¡Todo cuadra! No hay faltantes.");
+            container.style.display = 'none';
+        }
+    }
+
+    function copiarTexto() {
+        const t = document.getElementById('wspMessage').textContent;
+        navigator.clipboard.writeText(t).then(() => alert("Copiado!"));
+    }
+</script>
+
+</body>
+</html>
